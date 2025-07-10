@@ -98,7 +98,7 @@ cancel AS (
     ON c.user_id = au.user_id AND c.sub_date = au.event_date
   WHERE 
     (
-      (c.store_type = 'apple' AND c.notification_type IN ('DID_CHANGE_RENEWAL_STATUS','DID_CHANGE_RENEWAL_PREF'))
+      (c.store_type = 'apple' AND c.notification_type IN ('DID_CHANGE_RENEWAL_STATUS'))
       OR
       (c.store_type = 'google' AND c.notification_type = '3')
     )
@@ -155,4 +155,4 @@ def main(tag):
     print("🚀 所有日期数据写入完毕。")
 
 if __name__ == "__main__":
-    main("show_sub_ad")
+    main("subscription_pricing_area")

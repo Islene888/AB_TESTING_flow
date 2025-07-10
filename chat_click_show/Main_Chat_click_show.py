@@ -40,6 +40,6 @@ def main(tag):
 
 if __name__ == "__main__":
 
-    tag = "trans_pt"  # 未来可以从外部传入或读取配置
+    tag = "pool_rank_exp"  # 未来可以从外部传入或读取配置
     fetch_and_save_experiment_data()
     main(tag)

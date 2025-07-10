@@ -1,7 +1,6 @@
 import logging
 import os
 import urllib.parse
-import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from datetime import timedelta
@@ -38,7 +37,8 @@ def insert_payment_ratio_data(tag, event_date, experiment_name, engine, table_na
             print(f"✅ 目标表 {table_name} 已创建并清空数据。")
         insert_query = f"""
         INSERT INTO {table_name} (event_date, country, variation_id, active_users, paying_users, purchase_rate)
-WITH exp AS (
+WITH
+exp AS (
     SELECT user_id, variation_id, event_date
     FROM (
         SELECT
@@ -52,33 +52,34 @@ WITH exp AS (
     ) t
     WHERE rn = 1
 ),
-active_users AS (
-    SELECT 
-        a.event_date,
-        a.user_id,
-        a.country
-    FROM flow_event_info.tbl_wide_user_active_geo_daily a
-    WHERE a.event_date = '{event_date}'
+session AS (
+    -- 活跃用户会话表，带国家
+    SELECT s.event_date, s.user_id, geo.country
+    FROM flow_event_info.tbl_app_session_info s
+    JOIN flow_event_info.tbl_wide_user_active_geo_daily geo
+      ON s.user_id = geo.user_id AND s.event_date = geo.event_date
+    WHERE s.event_date = '{event_date}'
 ),
 exp_active AS (
-    SELECT 
+    -- 分组后活跃用户
+    SELECT
         e.event_date,
         e.variation_id,
-        a.country,
+        s.country,
         e.user_id
     FROM exp e
-    JOIN active_users a
-        ON e.user_id = a.user_id AND e.event_date = a.event_date
+    JOIN session s
+      ON e.user_id = s.user_id AND e.event_date = s.event_date
 ),
 pay_users AS (
-    SELECT 
-        p.event_date,
-        p.user_id
-    FROM flow_event_info.tbl_app_event_all_purchase p
-    WHERE p.type IN ('subscription', 'currency')
-      AND p.event_date = '{event_date}'
+    -- 当天发生购买的用户
+    SELECT event_date, user_id
+    FROM flow_event_info.tbl_app_event_all_purchase
+    WHERE event_date = '{event_date}'
+      AND type IN ('subscription', 'currency')
 ),
 exp_pay AS (
+    -- 付费活跃用户（保留国家字段）
     SELECT
         ea.event_date,
         ea.variation_id,
@@ -103,7 +104,6 @@ ORDER BY ea.event_date DESC, active_users DESC;
         """
         conn.execute(text(insert_query))
         print(f"✅ 数据已插入：{event_date}")
-
 
 def daterange(start_date, end_date):
     for n in range((end_date - start_date).days + 1):
@@ -136,4 +136,4 @@ def main(tag):
     print("🚀 所有日期数据写入完毕。")
 
 if __name__ == "__main__":
-    main("subscription_pricing_area")
+    main("mobile_new")

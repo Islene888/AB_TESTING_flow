@@ -2,7 +2,7 @@ import time
 from Business.events import (
     ARPU,
     ARPPU,
-    payment_ratio, LTV, AOV, cancel_sub, payment_rate_all, payment_rate_new
+    payment_ratio, LTV, AOV, cancel_sub, payment_rate_all, payment_rate_new, subscribe_new, AOV_new
 )
 
 def run_event(event_name, event_func, tag, explanation):
@@ -26,8 +26,9 @@ def main(tag):
         ("LTV", LTV.main, "7日生命周期价值（LTV）计算，衡量用户在加入后的前7天内所产生的总价值。"),
         ("payment_rate_all", payment_rate_all.main, "7日生命周期价值（LTV）计算，衡量用户在加入后的前7天内所产生的总价值。"),
         ("payment_rate_new", payment_rate_new.main, "7日生命周期价值（LTV）计算，衡量用户在加入后的前7天内所产生的总价值。"),
+        ("AOV_new", AOV_new.main, "7日生命周期价值（LTV）计算，衡量用户在加入后的前7天内所产生的总价值。"),
+        ("subscribe_new", subscribe_new.main, "7日生命周期价值（LTV）计算，衡量用户在加入后的前7天内所产生的总价值。"),
         ("payment", payment_ratio.main, "支付比例计算完成")
-
     ]
 
     for event_name, event_func, explanation in events:
@@ -36,5 +37,5 @@ def main(tag):
     print("\n🎉 【所有计算处理完毕】")
 
 if __name__ == "__main__":
-    tag = "subscription_pricing_area"
+    tag = "new_ui"
     main(tag)

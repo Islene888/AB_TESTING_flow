@@ -1,19 +1,17 @@
 import logging
 import os
 import urllib.parse
-import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 import warnings
 from datetime import datetime
-
 
 from growthbook_fetcher.experiment_tag_all_parameters import get_experiment_details_by_tag
 from growthbook_fetcher.growthbook_data_ETL import fetch_and_save_experiment_data
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-load_dotenv()  # ② 新增，自动读取 .env
+load_dotenv()  # 自动读取 .env
 fetch_and_save_experiment_data()
 
 def get_db_connection():
@@ -38,11 +36,15 @@ def insert_arpu_data(tag):
     engine = get_db_connection()
     table_name = f"tbl_report_arpu_{tag}"
 
+    # **注意：新增三项收入的字段**
     create_table_query = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         event_date DATE,
         variation_id VARCHAR(255),
         active_users INT,
+        total_subscribe_revenue DOUBLE,
+        total_order_revenue DOUBLE,
+        total_ad_revenue DOUBLE,
         total_revenue DOUBLE,
         ARPU DOUBLE,
         experiment_tag VARCHAR(255)
@@ -57,7 +59,7 @@ def insert_arpu_data(tag):
         print(f"✅ 目标表 {table_name} 已创建并清空数据。")
 
         insert_query = f"""
-        INSERT INTO {table_name} (event_date, variation_id, active_users, total_revenue, ARPU, experiment_tag)
+        INSERT INTO {table_name} (event_date, variation_id, active_users, total_subscribe_revenue, total_order_revenue, total_ad_revenue, total_revenue, ARPU, experiment_tag)
         WITH
             exp AS (
                 SELECT user_id, variation_id, event_date
@@ -78,7 +80,7 @@ def insert_arpu_data(tag):
                     e.event_date,
                     e.variation_id,
                     COUNT(DISTINCT pv.user_id) AS active_users
-                FROM flow_event_info.tbl_app_event_page_view pv
+                FROM flow_event_info.tbl_app_session_info pv
                 JOIN exp e ON pv.user_id = e.user_id AND pv.event_date = e.event_date
                 GROUP BY e.event_date, e.variation_id
             ),
@@ -94,66 +96,57 @@ def insert_arpu_data(tag):
                 WHERE event_date BETWEEN '{start_date}' AND '{end_date}'
                 GROUP BY user_id, event_date
             ),
+            -- 广告收入精确到user_id，先归组
+            ad_user AS (
+                SELECT user_id, event_date, SUM(ad_revenue) AS ad_revenue
+                FROM flow_event_info.tbl_app_event_ads_impression
+                WHERE event_date BETWEEN '{start_date}' AND '{end_date}'
+                GROUP BY user_id, event_date
+            ),
+            -- 汇总所有收入到用户维度
             user_revenue AS (
                 SELECT
                     e.event_date,
                     e.variation_id,
-                    COALESCE(s.sub_revenue, 0) + COALESCE(o.order_revenue, 0) AS total_revenue
+                    COALESCE(s.sub_revenue, 0) AS sub_revenue,
+                    COALESCE(o.order_revenue, 0) AS order_revenue,
+                    COALESCE(a.ad_revenue, 0) AS ad_revenue,
+                    COALESCE(s.sub_revenue, 0) + COALESCE(o.order_revenue, 0) + COALESCE(a.ad_revenue, 0) AS total_revenue
                 FROM exp e
                 LEFT JOIN sub s ON e.user_id = s.user_id AND e.event_date = s.event_date
                 LEFT JOIN ord o ON e.user_id = o.user_id AND e.event_date = o.event_date
+                LEFT JOIN ad_user a ON e.user_id = a.user_id AND e.event_date = a.event_date
             ),
+            -- 按组、日期汇总
             group_revenue AS (
                 SELECT
                     event_date,
                     variation_id,
-                    SUM(total_revenue) AS revenue
+                    SUM(sub_revenue) AS total_subscribe_revenue,
+                    SUM(order_revenue) AS total_order_revenue,
+                    SUM(ad_revenue) AS total_ad_revenue,
+                    SUM(total_revenue) AS total_revenue
                 FROM user_revenue
                 GROUP BY event_date, variation_id
-            ),
-            -- 广告收入（每日总额，无法归属到组或用户）
-            daily_ad AS (
-                SELECT event_date, SUM(ad_revenue) AS ad_revenue
-                FROM flow_event_info.tbl_app_event_ads_impression
-                WHERE event_date BETWEEN '{start_date}' AND '{end_date}'
-                GROUP BY event_date
-            ),
-            -- 每日总活跃用户（用于广告分摊）
-            daily_total_active AS (
-                SELECT event_date, SUM(active_users) AS total_active
-                FROM daily_active
-                GROUP BY event_date
             )
         SELECT
             da.event_date,
             da.variation_id,
             da.active_users,
-            -- 每组总收入 = 组充值+订阅收入 + 按活跃用户占比分摊广告收入
-            COALESCE(gr.revenue, 0)
-                + COALESCE(dad.ad_revenue, 0) * da.active_users / NULLIF(dta.total_active, 0)
-                AS total_revenue,
-            ROUND(
-                (
-                    COALESCE(gr.revenue, 0)
-                    + COALESCE(dad.ad_revenue, 0) * da.active_users / NULLIF(dta.total_active, 0)
-                ) / NULLIF(da.active_users, 0),
-            4) AS ARPU,
+            COALESCE(gr.total_subscribe_revenue, 0) AS total_subscribe_revenue,
+            COALESCE(gr.total_order_revenue, 0) AS total_order_revenue,
+            COALESCE(gr.total_ad_revenue, 0) AS total_ad_revenue,
+            COALESCE(gr.total_revenue, 0) AS total_revenue,
+            ROUND(COALESCE(gr.total_revenue, 0) / NULLIF(da.active_users, 0), 4) AS ARPU,
             '{tag}' AS experiment_tag
         FROM daily_active da
         LEFT JOIN group_revenue gr
             ON da.event_date = gr.event_date AND da.variation_id = gr.variation_id
-        LEFT JOIN daily_ad dad
-            ON da.event_date = dad.event_date
-        LEFT JOIN daily_total_active dta
-            ON da.event_date = dta.event_date
         WHERE da.event_date > '{start_date}' AND da.event_date < '{end_date}';
         """
         conn.execute(text(insert_query))
         print(f"✅ ARPU 明细数据已插入到表 {table_name}")
     return table_name
-
-
-
 
 def main(tag):
     print("🚀 主流程开始执行。")
@@ -164,4 +157,4 @@ def main(tag):
     print("🚀 主流程执行完毕。")
 
 if __name__ == "__main__":
-    main("subscription_pricing_area")
+    main("mobile_chat_theme")

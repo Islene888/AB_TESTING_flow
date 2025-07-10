@@ -124,4 +124,4 @@ def main(tag):
     print("🚀 所有日期数据写入完毕。")
 
 if __name__ == "__main__":
-    main("show_sub_ad")
+    main("subscription_pricing_area")

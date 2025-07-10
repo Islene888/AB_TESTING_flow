@@ -108,24 +108,24 @@ def fetch_and_save_experiment_data():
                 experiments_data.append({
                     "experiment_name": "chat-generate-image",
                     "tags": "mobile_new",
-                    "phase_start_time": datetime(2025,6,12,0,00,00),
-                    "phase_end_time": datetime(2025,6,23,18,00,00),
-                    "number_of_variations": 2,
-                    "control_group_key": 0
-                })
-                experiments_data.append({
-                    "experiment_name": "app_rs_top_recall_exp",
-                    "tags": "recall",
-                    "phase_start_time": datetime(2025,6,27,0,00,00),
-                    "phase_end_time": datetime(2025,7,2,20,00,00),
+                    "phase_start_time": datetime(2025,6,20,0,00,00),
+                    "phase_end_time": datetime(2025,7,10,18,00,00),
                     "number_of_variations": 2,
                     "control_group_key": 0
                 })
                 experiments_data.append({
                     "experiment_name": "mobile-subscribe-new-ui",
                     "tags": "new_ui",
-                    "phase_start_time": datetime(2025, 6, 24, 0, 00, 00),
-                    "phase_end_time": datetime(2025, 7, 2, 18, 00, 00),
+                    "phase_start_time": datetime(2025,6,30,0,00,00),
+                    "phase_end_time": datetime(2025,7,10,20,00,00),
+                    "number_of_variations": 2,
+                    "control_group_key": 0
+                })
+                experiments_data.append({
+                    "experiment_name": "app_new_user_clean_pool_rank_exp",
+                    "tags": "pool_rank_exp",
+                    "phase_start_time": datetime(2025, 7, 4, 0, 00, 00),
+                    "phase_end_time": datetime(2025, 7, 10, 18, 00, 00),
                     "number_of_variations": 2,
                     "control_group_key": 0
                 })

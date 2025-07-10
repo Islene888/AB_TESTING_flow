@@ -24,7 +24,7 @@ def insert_newuser_payment_rate(tag, event_date, experiment_name, engine, table_
         event_date DATE,
         variation_id VARCHAR(255),
         country VARCHAR(64),
-        dnu INT,
+        new_users INT,
         pay_user_day1 INT,
         pay_rate_day1 DOUBLE,
         pay_user_day3 INT,
@@ -41,56 +41,78 @@ def insert_newuser_payment_rate(tag, event_date, experiment_name, engine, table_
             print(f"✅ 目标表 {table_name} 已创建并清空数据。")
         insert_query = f"""
         INSERT INTO {table_name} (
-            event_date, variation_id, country, dnu, pay_user_day1, pay_rate_day1, pay_user_day3, pay_rate_day3
+            event_date, variation_id, country, new_users, pay_user_day1, pay_rate_day1, pay_user_day3, pay_rate_day3
         )
-WITH cohort AS (
-  SELECT
-    a.user_id,
-    a.variation_id,
-    a.event_date,
-    b.country,
-    ROW_NUMBER() OVER (PARTITION BY a.user_id, a.variation_id, a.event_date) AS rn
-  FROM flow_wide_info.tbl_wide_experiment_assignment_hi a
-  LEFT JOIN flow_event_info.tbl_wide_user_active_geo_daily b
-    ON a.user_id = b.user_id AND a.event_date = b.event_date
-  WHERE a.experiment_id = '{experiment_name}'
-    AND a.event_date = '{event_date_str}'
+WITH exp AS (
+    -- 实验分组（当天最新分组）
+    SELECT user_id, variation_id, event_date
+    FROM (
+        SELECT
+            user_id,
+            variation_id,
+            event_date,
+            ROW_NUMBER() OVER (PARTITION BY user_id, event_date ORDER BY event_date DESC) AS rn
+        FROM flow_wide_info.tbl_wide_experiment_assignment_hi
+        WHERE experiment_id = '{experiment_name}'
+          AND event_date = '{event_date_str}'
+    ) t
+    WHERE rn = 1
 ),
-dnu AS (
-  SELECT user_id, variation_id, event_date, country
-  FROM cohort
-  WHERE rn = 1
+user_geo AS (
+    -- 新用户当天国家
+    SELECT user_id, event_date, country
+    FROM flow_event_info.tbl_wide_user_active_geo_daily
+    WHERE event_date = '{event_date_str}'
+),
+new_users AS (
+    -- 新用户+实验分组+国家
+    SELECT
+        f.user_id,
+        f.first_visit_date AS event_date,          
+        COALESCE(g.country, 'unknown') AS country,
+        COALESCE(e.variation_id, 'unknown') AS variation_id
+    FROM flow_wide_info.tbl_wide_user_first_visit_app_info f
+    LEFT JOIN user_geo g ON f.user_id = g.user_id AND f.first_visit_date = g.event_date
+    LEFT JOIN exp e ON f.user_id = e.user_id AND f.first_visit_date = e.event_date
+    WHERE f.first_visit_date = '{event_date_str}'
 ),
 pay_user AS (
-  SELECT user_id, country, event_date
-  FROM flow_event_info.tbl_app_event_all_purchase
-  WHERE type IN ('subscription', 'currency')
-    AND event_date BETWEEN '{event_date_str}' AND '{day3_date}'
+    -- 新用户3天内的付费明细
+    SELECT
+        n.user_id,
+        n.event_date,
+        n.country,
+        n.variation_id,
+        p.event_date AS pay_event_date
+    FROM new_users n
+    LEFT JOIN flow_event_info.tbl_app_event_all_purchase p
+        ON n.user_id = p.user_id
+        AND p.type IN ('subscription', 'currency')
+        AND p.event_date BETWEEN '{event_date_str}' AND '{day3_date}'
 )
 SELECT
-  d.event_date,
-  d.variation_id,
-  d.country,
-  COUNT(DISTINCT d.user_id) AS dnu,
-  COUNT(DISTINCT CASE WHEN p.event_date <= DATE_ADD(d.event_date, INTERVAL 1 DAY) THEN d.user_id END) AS pay_user_day1,
-  ROUND(
-    COUNT(DISTINCT CASE WHEN p.event_date <= DATE_ADD(d.event_date, INTERVAL 1 DAY) THEN d.user_id END)
-    / NULLIF(COUNT(DISTINCT d.user_id),0), 4
-  ) AS pay_rate_day1,
-  COUNT(DISTINCT p.user_id) AS pay_user_day3,
-  ROUND(
-    COUNT(DISTINCT p.user_id) / NULLIF(COUNT(DISTINCT d.user_id),0), 4
-  ) AS pay_rate_day3
-FROM dnu d
-LEFT JOIN pay_user p
-  ON d.user_id = p.user_id AND d.country = p.country
-    AND p.event_date BETWEEN d.event_date AND DATE_ADD(d.event_date, INTERVAL 3 DAY)
-GROUP BY d.event_date, d.variation_id, d.country
-ORDER BY d.event_date DESC, d.country, d.variation_id;
+    '{event_date_str}' AS event_date,
+    variation_id,
+    country,
+    COUNT(DISTINCT user_id) AS new_users,
+    COUNT(DISTINCT CASE WHEN pay_event_date <= DATE_ADD('{event_date_str}', INTERVAL 1 DAY) THEN user_id END) AS pay_user_day1,
+    ROUND(
+        COUNT(DISTINCT CASE WHEN pay_event_date <= DATE_ADD('{event_date_str}', INTERVAL 1 DAY) THEN user_id END) / NULLIF(COUNT(DISTINCT user_id), 0),
+        4
+    ) AS pay_rate_day1,
+    COUNT(DISTINCT CASE WHEN pay_event_date <= DATE_ADD('{event_date_str}', INTERVAL 3 DAY) THEN user_id END) AS pay_user_day3,
+    ROUND(
+        COUNT(DISTINCT CASE WHEN pay_event_date <= DATE_ADD('{event_date_str}', INTERVAL 3 DAY) THEN user_id END) / NULLIF(COUNT(DISTINCT user_id), 0),
+        4
+    ) AS pay_rate_day3
+FROM pay_user
+WHERE variation_id IS NOT NULL  
+  AND variation_id != 'unknown'
+GROUP BY variation_id, country
+ORDER BY variation_id, country;
         """
         conn.execute(text(insert_query))
         print(f"✅ 数据已插入：{event_date_str}")
-
 
 def daterange(start_date, end_date):
     for n in range((end_date - start_date).days + 1):
@@ -104,7 +126,7 @@ def main(tag):
         return
 
     experiment_name = experiment_data['experiment_name']
-    start_time = experiment_data['phase_start_time'].date()  # datetime.date
+    start_time = experiment_data['phase_start_time'].date()
     end_time = experiment_data['phase_end_time'].date()
     table_name = f"tbl_report_payment_rate_new_{tag}"
 
@@ -123,4 +145,4 @@ def main(tag):
     print("🚀 所有日期数据写入完毕。")
 
 if __name__ == "__main__":
-    main("show_sub_ad")
+    main("mobile_new")
